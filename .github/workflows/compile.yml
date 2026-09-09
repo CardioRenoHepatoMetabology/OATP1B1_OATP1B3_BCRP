@@ -2,14 +2,12 @@ name: Automated XeLaTeX Compilation
 
 on:
   push:
-    # Скрипт реагирует только на изменения главного LaTeX-файла
     paths:
       - '**.tex'
     branches:
       - main
       - master
 
-# Явно разрешаем роботу делать push (запись) обратно в репозиторий
 permissions:
   contents: write
 
@@ -18,41 +16,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Скачиваем актуальное состояние репозитория
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Загружаем историю, необходимую для push
+          fetch-depth: 0
 
-      # 2. Устанавливаем XeLaTeX, кириллицу и системные шрифты Noto
       - name: Install TeX Live and Noto Fonts
         run: |
           sudo apt-get update -y
           sudo apt-get install -y texlive-xetex texlive-lang-cyrillic texlive-fonts-recommended fonts-noto
 
-      # 3. Компилируем документ дважды (для сборки библиографии и ссылок)
       - name: Compile LaTeX to PDF
         run: |
-          # Внимание: Скрипт автоматически найдет любой .tex файл в корне и скомпилирует его
           TEX_FILE=$(ls *.tex | head -n 1)
-          xelatex -interaction=nonstopmode "$TEX_FILE" || true
-          xelatex -interaction=nonstopmode "$TEX_FILE" || true
+          # Убрали принудительное глушение ошибок, чтобы видеть реальную причину падения
+          xelatex -interaction=nonstopmode "$TEX_FILE"
+          xelatex -interaction=nonstopmode "$TEX_FILE"
 
-      # 4. Сохраняем скомпилированный PDF обратно в тот же каталог
       - name: Commit and Push compiled PDF
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "actions@github.com"
           
-          # Находим получившийся PDF-файл и добавляем в индекс
-          PDF_FILE=$(ls *.pdf | head -n 1)
-          git add "$PDF_FILE"
-          
-          # Проверяем, изменился ли PDF (чтобы избежать пустых коммитов)
-          if git diff --staged --quiet; then
-            echo "Изменений в PDF-документе не обнаружено."
+          # Безопасный поиск PDF: проверяем физическое существование файла
+          if ls *.pdf 1> /dev/null 2>&1; then
+            PDF_FILE=$(ls *.pdf | head -n 1)
+            git add "$PDF_FILE"
+            
+            if git diff --staged --quiet; then
+              echo "Изменений в PDF-документе не обнаружено."
+            else
+              git commit -m "Auto-compiled LaTeX PDF [skip ci]"
+              git push origin HEAD:${{ github.ref }}
+            fi
           else
-            # Метка [skip ci] КРИТИЧЕСКИ важна — она запрещает бесконечный цикл самосборки
-            git commit -m "Auto-compiled LaTeX PDF [skip ci]"
-            git push origin HEAD:${{ github.ref }}
+            echo "КРИТИЧЕСКАЯ ОШИБКА: Компилятор XeLaTeX не создал PDF-файл. Проверьте логи предыдущего шага!"
+            exit 1
           fi
